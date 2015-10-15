@@ -673,6 +673,8 @@ module VM = struct
 			hap = hvm;
 			name = vm.name;
 			xsdata = vm.xsdata;
+			client_to_guest = vm.client_to_guest;
+			guest_to_client = vm.guest_to_client;
 			platformdata = platformdata @ vcpus;
 			bios_strings = vm.bios_strings;
 			auto_update_drivers = vm.auto_update_drivers;
@@ -874,9 +876,13 @@ module VM = struct
 			) (get_stubdom ~xs di.Xenctrl.domid)
 	) Newest
 
-	let set_xsdata task vm xsdata = on_domain (fun xc xs _ _ di ->
-		Domain.set_xsdata ~xs di.Xenctrl.domid xsdata
+	let set_xspairs domain_setter task vm pairs = on_domain (fun xc xs _ _ di ->
+		domain_setter ~xs di.Xenctrl.domid pairs
 	) Newest task vm
+
+	let set_xsdata = set_xspairs Domain.set_xsdata
+	let set_client_to_guest = set_xspairs Domain.set_client_to_guest
+	let set_guest_to_client = set_xspairs Domain.set_guest_to_client
 
 	let set_vcpus task vm target = on_domain (fun xc xs _ _ di ->
 		let domid = di.Xenctrl.domid in
@@ -1428,8 +1434,11 @@ module VM = struct
 							this @ (List.concat (List.map (ls_lR root) subdirs)) in
 						let guest_agent =
 							[ "drivers"; "attr"; "data"; "control"; "device" ] |> List.map (ls_lR (Printf.sprintf "/local/domain/%d" di.Xenctrl.domid)) |> List.concat |> List.map (fun (k,v) -> (k,Xenops_utils.utf8_recode v)) in
-						let xsdata_state =
-							Domain.allowed_xsdata_prefixes |> List.map (ls_lR (Printf.sprintf "/local/domain/%d" di.Xenctrl.domid)) |> List.concat in
+						let get_xs_state prefixes =
+							prefixes |> List.map (ls_lR (Printf.sprintf "/local/domain/%d" di.Xenctrl.domid)) |> List.concat in
+						let xsdata_state = get_xs_state Domain.allowed_xsdata_prefixes in
+						let client_to_guest_state = get_xs_state Domain.allowed_client_to_guest_prefixes in
+						let guest_to_client_state = get_xs_state Domain.allowed_guest_to_client_prefixes in
 						let shadow_multiplier_target =
 							if not di.Xenctrl.hvm_guest
 							then 1.
@@ -1457,6 +1466,8 @@ module VM = struct
 							uncooperative_balloon_driver = uncooperative;
 							guest_agent = guest_agent;
 							xsdata_state = xsdata_state;
+							client_to_guest_state = client_to_guest_state;
+							guest_to_client_state = guest_to_client_state;
 							vcpu_target = begin match vme with
 								| Some x -> x.VmExtra.non_persistent.VmExtra.vcpus
 								| None -> 0
@@ -2323,6 +2334,8 @@ module Actions = struct
 			sprintf "/local/domain/%d/device" domid;
 			sprintf "/local/domain/%d/rrd" domid;
 			sprintf "/local/domain/%d/vm-data" domid;
+			sprintf "/local/domain/%d/client_to_guest" domid;
+			sprintf "/local/domain/%d/guest_to_client" domid;
 			sprintf "/vm/%s/rtc/timeoffset" uuid;
 		]
 

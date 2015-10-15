@@ -37,6 +37,8 @@ let create ~xc ~xs domid =
  		Domain.name = stubdom_name;
  		Domain.platformdata = [];
  		Domain.xsdata = [];
+		Domain.client_to_guest = [];
+		Domain.guest_to_client = [];
 		Domain.bios_strings = [];
                 Domain.auto_update_drivers = false;
 	} in

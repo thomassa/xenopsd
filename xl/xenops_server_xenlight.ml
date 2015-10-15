@@ -2541,6 +2541,8 @@ module VM = struct
 							uncooperative_balloon_driver = uncooperative;
 							guest_agent = guest_agent;
 							xsdata_state = xsdata_state;
+							client_to_guest_state = []; (* Not supported in xenlight *)
+							guest_to_client_state = []; (* Not supported in xenlight *)
 							vcpu_target = begin match vme with
 								| Some x -> x.VmExtra.non_persistent.VmExtra.vcpus
 								| None -> 0

@@ -77,6 +77,8 @@ type atomic =
 	| PCI_plug of Pci.id
 	| PCI_unplug of Pci.id
 	| VM_set_xsdata of (Vm.id * (string * string) list)
+	| VM_set_client_to_guest of (Vm.id * (string * string) list)
+	| VM_set_guest_to_client of (Vm.id * (string * string) list)
 	| VM_set_vcpus of (Vm.id * int)
 	| VM_set_shadow_multiplier of (Vm.id * float)
 	| VM_set_memory_dynamic_range of (Vm.id * int64 * int64)
@@ -938,6 +940,9 @@ let rec atomics_of_operation = function
 let perform_atomic ~progress_callback ?subtask ?result (op: atomic) (t: Xenops_task.t) : unit =
 	let module B = (val get_backend () : S) in
 	Xenops_task.check_cancelling t;
+	let string_of_string_string_list l =
+		"[ " ^ (String.concat "; " (List.map (fun (k, v) -> k ^ ": " ^ v) l)) ^ " ]"
+	in
 	match op with
 		| VIF_plug id ->
 			debug "VIF.plug %s" (VIF_DB.string_of_id id);
@@ -1054,8 +1059,14 @@ let perform_atomic ~progress_callback ?subtask ?result (op: atomic) (t: Xenops_t
 					B.PCI.unplug t (PCI_DB.vm_of id) (PCI_DB.read_exn id);
 				) (fun () -> PCI_DB.signal id)
 		| VM_set_xsdata (id, xsdata) ->
-			debug "VM.set_xsdata (%s, [ %s ])" id (String.concat "; " (List.map (fun (k, v) -> k ^ ": " ^ v) xsdata));
+			debug "VM.set_xsdata (%s, %s)" id (string_of_string_string_list xsdata);
 			B.VM.set_xsdata t (VM_DB.read_exn id) xsdata
+		| VM_set_client_to_guest (id, pairs) ->
+			debug "VM.set_client_to_guest (%s, %s)" id (string_of_string_string_list pairs);
+			B.VM.set_client_to_guest t (VM_DB.read_exn id) pairs
+		| VM_set_guest_to_client (id, pairs) ->
+			debug "VM.set_guest_to_client (%s, %s)" id (string_of_string_string_list pairs);
+			B.VM.set_guest_to_client t (VM_DB.read_exn id) pairs
 		| VM_set_vcpus (id, n) ->
 			debug "VM.set_vcpus (%s, %d)" id n;
 			let vm_t = VM_DB.read_exn id in
@@ -1249,6 +1260,8 @@ and trigger_cleanup_after_failure op t = match op with
 		| VM_hook_script (id, _, _)
 		| VM_remove id
 		| VM_set_xsdata (id, _)
+		| VM_set_client_to_guest (id, _)
+		| VM_set_guest_to_client (id, _)
 		| VM_set_vcpus (id, _)
 		| VM_set_shadow_multiplier (id, _)
 		| VM_set_memory_dynamic_range (id, _, _)
@@ -1879,6 +1892,10 @@ module VM = struct
 	let run_script _ dbg id script = queue_operation dbg id (Atomic(VM_run_script (id, script)))
 
 	let set_xsdata _ dbg id xsdata = queue_operation dbg id (Atomic (VM_set_xsdata (id, xsdata)))
+
+	let set_client_to_guest _ dbg id pairs = queue_operation dbg id (Atomic (VM_set_client_to_guest (id, pairs)))
+
+	let set_guest_to_client _ dbg id pairs = queue_operation dbg id (Atomic (VM_set_guest_to_client (id, pairs)))
 
 	let set_vcpus _ dbg id n = queue_operation dbg id (Atomic(VM_set_vcpus (id, n)))
 

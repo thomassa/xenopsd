@@ -31,6 +31,8 @@ type create_info = {
 	hap: bool;
 	name: string;
 	xsdata: (string * string) list;
+	client_to_guest: (string * string) list;
+	guest_to_client: (string * string) list;
 	platformdata: (string * string) list;
 	bios_strings: (string * string) list;
 	auto_update_drivers: bool;
@@ -60,11 +62,22 @@ type build_info = {
 type domid = int
 
 let allowed_xsdata_prefixes = [ "vm-data"; "FIST" ]
+let allowed_client_to_guest_prefix = "client_to_guest"
+let allowed_client_to_guest_prefixes = [allowed_client_to_guest_prefix]
+let allowed_guest_to_client_prefix = "guest_to_client"
+let allowed_guest_to_client_prefixes = [allowed_guest_to_client_prefix]
 
-let filtered_xsdata =
+let filtered_pairs allowed_prefixes =
 	(* disallowed by default; allowed only if it has one of a set of prefixes *)
-	let allowed (x, _) = List.fold_left (||) false (List.map (fun p -> String.startswith (p ^ "/") x) allowed_xsdata_prefixes) in
+	let allowed (x, _) = List.fold_left (||) false (List.map (fun p -> String.startswith (p ^ "/") x) allowed_prefixes) in
 	List.filter allowed
+
+let filtered_xsdata = filtered_pairs allowed_xsdata_prefixes
+let filtered_client_to_guest = filtered_pairs allowed_client_to_guest_prefixes
+let filtered_guest_to_client = filtered_pairs allowed_guest_to_client_prefixes
+
+let prefixed_pairs prefix =
+	List.map (fun (k, v) -> prefix ^ "/" ^ k, v)
 
 exception Suspend_image_failure
 exception Not_enough_memory of int64
@@ -239,10 +252,12 @@ let make ~xc ~xs vm_info uuid =
 				let ent = sprintf "%s/%s" dom_path dir in
 				t.Xst.mkdir ent;
 				t.Xst.setperms ent rwperm
-			) [ "device"; "error"; "drivers"; "control"; "attr"; "data"; "messages"; "vm-data"; "hvmloader"; "rrd" ];
+			) [ "device"; "error"; "drivers"; "control"; "attr"; "data"; "messages"; "vm-data"; "hvmloader"; "rrd"; "client_to_guest"; "guest_to_client" ];
 		);
 
 		xs.Xs.writev dom_path (filtered_xsdata vm_info.xsdata);
+		xs.Xs.writev dom_path (prefixed_pairs allowed_client_to_guest_prefix vm_info.client_to_guest);
+		xs.Xs.writev dom_path (prefixed_pairs allowed_guest_to_client_prefix vm_info.guest_to_client);
 		xs.Xs.writev (dom_path ^ "/platform") vm_info.platformdata;
 	
 		xs.Xs.writev (dom_path ^ "/bios-strings") vm_info.bios_strings;
@@ -1380,9 +1395,22 @@ let set_memory_target ~xs domid mem_kib =
 	debug "domain %d set memory target to %Ld MiB" domid mem_mib
 
 
-let set_xsdata ~xs domid xsdata =
+let set_xsdata ~xs domid pairs =
 	let dom_path = Printf.sprintf "/local/domain/%d" domid in
 	Xs.transaction xs (fun t ->
 		List.iter (fun x -> t.Xst.rm (dom_path ^ "/" ^ x)) allowed_xsdata_prefixes;
-		t.Xst.writev dom_path (filtered_xsdata xsdata);
+		t.Xst.writev dom_path (filtered_xsdata pairs);
 	)
+
+let set_xspairs ~prefix ~xs domid pairs =
+	let dom_path = Printf.sprintf "/local/domain/%d" domid in
+	let prefix_path = dom_path ^ "/" ^ prefix in
+	Xs.transaction xs (fun t ->
+		t.Xst.rm (prefix_path);
+		(* Create the XenStore node again in case pairs is an empty list *)
+		t.Xst.mkdir prefix_path;
+		t.Xst.writev dom_path (prefixed_pairs prefix pairs);
+	)
+
+let set_client_to_guest = set_xspairs ~prefix:allowed_client_to_guest_prefix
+let set_guest_to_client = set_xspairs ~prefix:allowed_guest_to_client_prefix

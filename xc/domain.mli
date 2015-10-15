@@ -32,6 +32,8 @@ type create_info = {
 	hap: bool;
 	name: string;
 	xsdata: (string * string) list;
+	client_to_guest: (string * string) list;
+	guest_to_client: (string * string) list;
 	platformdata: (string * string) list;
 	bios_strings: (string * string) list;
 	auto_update_drivers: bool;
@@ -219,5 +221,9 @@ val set_memory_target : xs:Xenstore.Xs.xsh -> Xenstore.Xs.domid -> int64 -> unit
 val wait_xen_free_mem : xc:Xenctrl.handle -> ?maximum_wait_time_seconds:int -> int64 -> bool
 
 val allowed_xsdata_prefixes: string list
+val allowed_client_to_guest_prefixes: string list
+val allowed_guest_to_client_prefixes: string list
 
 val set_xsdata : xs:Xenstore.Xs.xsh -> domid -> (string * string) list -> unit
+val set_client_to_guest : xs:Xenstore.Xs.xsh -> domid -> (string * string) list -> unit
+val set_guest_to_client : xs:Xenstore.Xs.xsh -> domid -> (string * string) list -> unit

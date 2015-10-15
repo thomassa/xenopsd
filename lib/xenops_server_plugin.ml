@@ -75,6 +75,8 @@ module type S = sig
 		val pause: Xenops_task.t -> Vm.t -> unit
 		val unpause: Xenops_task.t -> Vm.t -> unit
 		val set_xsdata: Xenops_task.t -> Vm.t -> (string * string) list -> unit
+		val set_client_to_guest: Xenops_task.t -> Vm.t -> (string * string) list -> unit
+		val set_guest_to_client: Xenops_task.t -> Vm.t -> (string * string) list -> unit
 		val set_vcpus: Xenops_task.t -> Vm.t -> int -> unit
 		val set_shadow_multiplier: Xenops_task.t -> Vm.t -> float -> unit
 		val set_memory_dynamic_range: Xenops_task.t -> Vm.t -> int64 -> int64 -> unit

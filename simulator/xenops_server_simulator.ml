@@ -40,6 +40,8 @@ module Domain = struct
 		pcis: Pci.t list;
 		vgpus: Vgpu.t list;
 		xsdata: (string * string) list;
+		client_to_guest: (string * string) list;
+		guest_to_client: (string * string) list;
 		last_create_time: float;
 	} with rpc
 end
@@ -98,6 +100,8 @@ let create_nolock _ vm () =
 			pcis = [];
 			vgpus = [];
 			xsdata = vm.Vm.xsdata;
+			client_to_guest = vm.Vm.client_to_guest;
+			guest_to_client = vm.Vm.guest_to_client;
 			last_create_time = Unix.gettimeofday ();
 		} in
 		DB.write vm.Vm.id domain
@@ -165,6 +169,14 @@ let do_pause_unpause_nolock vm paused () =
 let do_set_xsdata_nolock vm xsdata () =
 	let d = DB.read_exn vm.Vm.id in
 	DB.write vm.Vm.id { d with Domain.xsdata = xsdata }
+
+let do_set_client_to_guest_nolock vm pairs () =
+	let d = DB.read_exn vm.Vm.id in
+	DB.write vm.Vm.id { d with Domain.client_to_guest = pairs }
+
+let do_set_guest_to_client_nolock vm pairs () =
+	let d = DB.read_exn vm.Vm.id in
+	DB.write vm.Vm.id { d with Domain.guest_to_client = pairs }
 
 let do_set_vcpus_nolock vm n () =
 	let d = DB.read_exn vm.Vm.id in
@@ -344,6 +356,8 @@ module VM = struct
 	let pause _ vm = Mutex.execute m (do_pause_unpause_nolock vm true)
 	let unpause _ vm = Mutex.execute m (do_pause_unpause_nolock vm false)
 	let set_xsdata _ vm xs = Mutex.execute m (do_set_xsdata_nolock vm xs)
+	let set_client_to_guest _ vm xs = Mutex.execute m (do_set_client_to_guest_nolock vm xs)
+	let set_guest_to_client _ vm xs = Mutex.execute m (do_set_guest_to_client_nolock vm xs)
 	let set_vcpus _ vm n = Mutex.execute m (do_set_vcpus_nolock vm n)
 	let set_shadow_multiplier _ vm n = Mutex.execute m (do_set_shadow_multiplier_nolock vm n)
 	let set_memory_dynamic_range _ vm min max = Mutex.execute m (do_set_memory_dynamic_range_nolock vm min max)
