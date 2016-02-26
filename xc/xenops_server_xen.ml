@@ -308,7 +308,8 @@ module Mem = struct
 				error "Cannot free %Ld; only %Ld are available" needed free;
 				raise (Cannot_free_this_much_memory(needed, free))
 			| Memory_interface.Domains_refused_to_cooperate domids ->
-				debug "Got error_domains_refused_to_cooperate_code from ballooning daemon";
+				debug "Got error_domains_refused_to_cooperate_code from ballooning daemon: domids=[%s]"
+					(String.concat ";" (List.map string_of_int domids));
 				Xenctrl.with_intf
 					(fun xc ->
 						let vms = List.map (get_uuid ~xc) domids |> List.map Uuidm.to_string in
