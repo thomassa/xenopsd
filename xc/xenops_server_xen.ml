@@ -1502,7 +1502,7 @@ module VM = struct
 						let devices = Device_common.list_frontends ~xs domid in
 						let vbds = List.filter (fun device -> match Device_common.(device.frontend.kind) with Device_common.Vbd _ -> true | _ -> false) devices in
 						List.iter (Device.Vbd.hard_shutdown_request ~xs) vbds;
-						List.iter (Device.Vbd.hard_shutdown_wait task ~xs ~timeout:30.) vbds;
+						List.iter (Device.Vbd.hard_shutdown_wait task ~xs ~timeout:90.) vbds;
 						debug "VM = %s; domid = %d; Disk backends have all been flushed" vm.Vm.id domid;
 						List.iter (fun vbds_chunk ->
 							Stdext.Threadext.thread_iter (fun device ->

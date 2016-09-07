@@ -1495,7 +1495,7 @@ let signal (task: Xenops_task.t) ~xs ~qemu_domid ~domid ?wait_for ?param cmd =
                 * Talk to Citrix about this
                 *)
 		let cancel = Qemu (qemu_domid, domid) in
-		let (_: bool) = cancellable_watch cancel [ Watch.value_to_become pw state ] [] task ~xs ~timeout:30. () in
+		let (_: bool) = cancellable_watch cancel [ Watch.value_to_become pw state ] [] task ~xs ~timeout:90. () in
 		()
 	| None -> ()
 
