@@ -188,8 +188,29 @@ add_to_bridge()
         fi
 
         $vsctl --timeout=30 -- --if-exists del-port $dev -- add-port $bridge $dev $vif_details || handle_error "Failed to vsctl add-port ${bridge} ${dev} ${vif_details}"
+        ofport=$($vsctl get interface "$dev" ofport)
+        if [ $? -ne 0 ] || [ -z "$ofport" ]; then
+            handle_error "$dev interface not found on the bridge"
+        fi
+
+        xenstore-write "${HOTPLUG}/${TYPE}-ofport" "$ofport"
         ;;
     esac
+
+    ifindex=$(cat /sys/class/net/"$dev"/ifindex)
+    if [ $? -ne 0 ] || [ -z "$ifindex" ]; then
+        handle_error "$dev ifindex not found"
+    fi
+
+    xenstore-write "${HOTPLUG}/${TYPE}-ifindex" "$ifindex"
+
+    # PVS proxy rules are only setup if the pvs-interface xenstore node exists
+    xenstore-read ${PRIVATE}/pvs-interface 2>/dev/null
+    if [ $? -eq 0 ]; then
+        local setup_pvs_proxy_rules=$(xenstore-read "${PRIVATE}/setup-pvs-proxy-rules" 2>/dev/null)
+        $setup_pvs_proxy_rules add "${TYPE}" "${dev}" "$PRIVATE" "$HOTPLUG" \
+            || logger -t scripts-vif "Failed to ${setup_pvs_proxy_rules} add ${TYPE} ${dev} ${PRIVATE} ${HOTPLUG}"
+	fi
 
     local setup_vif_rules=$(xenstore-read "${PRIVATE}/setup-vif-rules" 2>/dev/null)
     $setup_vif_rules $XENOPSD_BACKEND ${dev} $DOMUUID $DEVID filter         || logger -t scripts-vif "Failed to setup-vif-rules $XENOPSD_BACKEND ${dev} $DOMUUID $DEVID filter"
@@ -197,6 +218,16 @@ add_to_bridge()
 
 remove_from_bridge()
 {
+    ${IP} link set "${dev}" down || logger -t scripts-vif "Failed to ip link set ${dev} down"
+
+    # PVS proxy rules are only setup if the pvs-interface xenstore node exists
+    xenstore-read ${PRIVATE}/pvs-interface 2>/dev/null
+    if [ $? -eq 0 ]; then
+        local setup_pvs_proxy_rules=$(xenstore-read "${PRIVATE}/setup-pvs-proxy-rules" 2>/dev/null)
+        /usr/libexec/xenopsd/setup-pvs-proxy-rules remove "${TYPE}" "${dev}" "${PRIVATE}" "${HOTPLUG}" \
+            || logger -t scripts-vif "Failed to ${setup_pvs_proxy_rules} remove ${TYPE} ${dev} ${PRIVATE} ${HOTPLUG}"
+    fi
+
     local setup_vif_rules=$(xenstore-read "${PRIVATE}/setup-vif-rules" 2>/dev/null)
     $setup_vif_rules $XENOPSD_BACKEND ${dev} $DOMUUID $DEVID clear          || logger -t scripts-vif "Failed to setup-vif-rules $XENOPSD_BACKEND ${dev} $DOMUUID $DEVID clear"
 
@@ -209,8 +240,11 @@ remove_from_bridge()
         # port.  Use --if-exists to suppress the error that would otherwise
         # arise in that case.
         $vsctl --timeout=30 -- --if-exists del-port $dev
+        xenstore-rm "${HOTPLUG}/${TYPE}-ofport"
         ;;
     esac
+
+    xenstore-rm "${HOTPLUG}/${TYPE}-ifindex"
 }
 
 call_hook_script() {
@@ -313,6 +347,7 @@ add)
     ;;
 
 remove)
+    remove_from_bridge
     if [ "${TYPE}" = "vif" ] ;then
         call_hook_script $DOMID "${ACTION}"
 		# Unclear whether this is necessary, since netback also does it:
@@ -323,7 +358,6 @@ remove)
         xenstore-rm "${HOTPLUG}/hotplug"
     fi
     logger -t scripts-vif "${dev} has been removed"
-    remove_from_bridge
     ;;
 
 move)

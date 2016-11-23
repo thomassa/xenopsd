@@ -883,7 +883,7 @@ module VM = struct
 								  ~platformdata:vm.Xenops_interface.Vm.platformdata
 								  ~default:false
 								; nested_virt=Platform.is_true
-								  ~key:"nested_virt"
+								  ~key:"nested-virt"
 								  ~platformdata:vm.Xenops_interface.Vm.platformdata
 								  ~default:false
 								} in
@@ -2205,7 +2205,7 @@ module VBD = struct
 			Opt.map (fun i -> Ionice i) i
 		with
 			| Ionice.Parse_failed x ->
-				error "Failed to parse ionice result: %s" x;
+				warn "Failed to parse ionice result: %s" x;
 				None
 			| _ ->
 				None
@@ -2290,6 +2290,8 @@ module VIF = struct
 		_ipv6_allowed;
 	]
 
+	let pvs_proxy_key_prefix = "pvs-"
+
 	let xenstore_of_locking_mode = function
 		| Locked { ipv4 = ipv4; ipv6 = ipv6 } -> [
 			_locking_mode, "locked";
@@ -2335,6 +2337,26 @@ module VIF = struct
 		let flag = if disconnected then "1" else "0" in
 		path, flag
 
+	let xenstore_of_pvs_proxy proxy =
+		match proxy with
+		| None -> []
+		| Some (site, servers, interface) ->
+			let open Vif.PVS_proxy in
+			let server_keys =
+				List.mapi (fun i server ->
+					let open Printf in
+					[
+						sprintf "pvs-server-%d-addresses" i, String.concat "," server.addresses;
+						sprintf "pvs-server-%d-ports" i, sprintf "%d-%d" server.first_port server.last_port;
+					]
+				) servers
+				|> List.flatten
+			in
+			("pvs-site", site) ::
+			("pvs-interface", interface) ::
+			("pvs-server-num", string_of_int (List.length servers)) ::
+			server_keys
+
 	let active_path vm vif = Printf.sprintf "/vm/%s/devices/vif/%s" vm (snd vif.Vif.id)
 
 	let set_active task vm vif active =
@@ -2360,9 +2382,11 @@ module VIF = struct
 				let id = _device_id Device_common.Vif, id_of vif in
 
 				let setup_vif_rules = [ "setup-vif-rules", !Xc_path.setup_vif_rules ] in
+				let setup_pvs_proxy_rules = [ "setup-pvs-proxy-rules", !Xc_path.setup_pvs_proxy_rules ] in
 				let xenopsd_backend = [ "xenopsd-backend", "classic" ] in
 				let locking_mode = xenstore_of_locking_mode vif.locking_mode in
 				let static_ip_setting = xenstore_of_static_ip_setting vif in
+				let pvs_proxy = xenstore_of_pvs_proxy vif.pvs_proxy in
 
 				let interfaces = interfaces_of_vif frontend_domid vif.id vif.position in
 
@@ -2379,7 +2403,8 @@ module VIF = struct
 								~mac:vif.mac ~carrier:(vif.carrier && (vif.locking_mode <> Xenops_interface.Vif.Disabled))
 								~mtu:vif.mtu ~rate:vif.rate ~backend_domid
 								~other_config:vif.other_config
-								~extra_private_keys:(id :: vif.extra_private_keys @ locking_mode @ setup_vif_rules @ xenopsd_backend)
+								~extra_private_keys:(id :: vif.extra_private_keys @ locking_mode @ setup_vif_rules @
+									setup_pvs_proxy_rules @ pvs_proxy @ xenopsd_backend)
 								~extra_xenserver_keys:static_ip_setting
 								frontend_domid in
 						let (_: Device_common.device) = create task frontend_domid in
@@ -2579,6 +2604,46 @@ module VIF = struct
 					raise (Internal_error "Static IPv6 configuration selected, but no address specified.")
 			)
 
+	let set_pvs_proxy task vm vif proxy =
+		let open Device_common in
+		with_xc_and_xs
+			(fun xc xs ->
+				(* If the device is gone then this is ok *)
+				let device = device_by_id xc xs vm Vif Newest (id_of vif) in
+				let private_path = Device_common.get_private_data_path_of_device device in
+				let hotplug_path = Hotplug.get_hotplug_path device in
+				let setup action =
+					let devid = string_of_int device.frontend.devid in
+					let vif_interface_name = Printf.sprintf "vif%d.%s" device.frontend.domid devid in
+					let tap_interface_name = Printf.sprintf "tap%d.%s" device.frontend.domid devid in
+					let di = Xenctrl.domain_getinfo xc device.frontend.domid in
+					ignore (run !Xc_path.setup_pvs_proxy_rules [action; "vif"; vif_interface_name;
+						private_path; hotplug_path]);
+					if di.Xenctrl.hvm_guest then
+						try
+							ignore (run !Xc_path.setup_pvs_proxy_rules [action; "tap"; tap_interface_name;
+							private_path; hotplug_path])
+						with _ ->
+							(* There won't be a tap device if the VM has PV drivers loaded. *)
+							()
+				in
+				if proxy = None then begin
+					setup "remove";
+					Xs.transaction xs (fun t ->
+						let keys = t.Xs.directory private_path in
+						List.iter (fun key ->
+							if String.startswith pvs_proxy_key_prefix key then
+								t.Xs.rm (Printf.sprintf "%s/%s" private_path key)
+						) keys
+					)
+				end else begin
+					Xs.transaction xs (fun t ->
+						t.Xs.writev private_path (xenstore_of_pvs_proxy proxy)
+					);
+					setup "add"
+				end
+			)
+
 	let get_state vm vif =
 		with_xc_and_xs
 			(fun xc xs ->
@@ -2586,6 +2651,8 @@ module VIF = struct
 					let (d: Device_common.device) = device_by_id xc xs vm Device_common.Vif Newest (id_of vif) in
 					let path = Device_common.kthread_pid_path_of_device ~xs d in
 					let kthread_pid = try xs.Xs.read path |> int_of_string with _ -> 0 in
+					let pra_path = Hotplug.vif_pvs_rules_active_path_of_device ~xs d in
+					let pvs_rules_active = try (ignore (xs.Xs.read pra_path); true) with _ -> false in
 					(* We say the device is present unless it has been deleted
 					   from xenstore. The corrolary is that: only when the device
 					   is finally deleted from xenstore, can we remove bridges or
@@ -2597,7 +2664,8 @@ module VIF = struct
 						plugged = true;
 						media_present = true;
 						kthread_pid = kthread_pid;
-						device = Some device
+						device = Some device;
+						pvs_rules_active = pvs_rules_active;
 					}
 				with
 					| (Does_not_exist(_,_))
